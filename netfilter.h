@@ -39,7 +39,7 @@ static int nf_callback(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct n
     ph = nfq_get_msg_packet_hdr(nfa);
     id = ntohl(ph->packet_id);
 
-    ret = nfq_get_payload(nfa, &buffer);
+    ret = nfq_get_payload(nfa, (char **)&buffer);
     verdict = go_callback(id, buffer, ret, cb_func);
 
     return nfq_set_verdict(qh, id, verdict, 0, NULL);
