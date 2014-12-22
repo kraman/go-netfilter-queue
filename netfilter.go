@@ -41,22 +41,23 @@ import (
 //Verdict for a packet
 type Verdict C.uint
 
-type ModifiedVerdict struct {
-	MyVerdict Verdict
-	Packet    []byte
+//Verdict + packet for injection
+type VerdictPacket struct {
+	Verdict Verdict
+	Packet  []byte
 }
 
 type NFPacket struct {
 	Packet                 gopacket.Packet
 	verdictChannel         chan Verdict
-	verdictModifiedChannel chan ModifiedVerdict
+	verdictModifiedChannel chan VerdictPacket
 }
 
 //Set the verdict for the packet
 func (p *NFPacket) SetModifiedVerdict(v Verdict, packet []byte) {
-	p.verdictModifiedChannel <- ModifiedVerdict{
-		MyVerdict: v,
-		Packet:    packet,
+	p.verdictModifiedChannel <- VerdictPacket{
+		Verdict: v,
+		Packet:  packet,
 	}
 }
 
@@ -155,14 +156,6 @@ func (nfq *NFQueue) run() {
 	C.Run(nfq.h, nfq.fd)
 }
 
-/*
-type VerdictModified struct {
-	Verdict C.int
-	Data    *C.uchar
-	Len     C.int
-}
-*/
-
 type VerdictModified C.verdictModified
 
 //export go_callback
@@ -175,21 +168,19 @@ func go_callback(queueId C.int, data *C.uchar, length C.int, cb *chan NFPacket) 
 	})
 	p := NFPacket{
 		verdictChannel:         make(chan Verdict),
-		verdictModifiedChannel: make(chan ModifiedVerdict),
+		verdictModifiedChannel: make(chan VerdictPacket),
 		Packet:                 packet,
 	}
 	select {
 	case (*cb) <- p:
 		select {
 		case v := <-p.verdictModifiedChannel:
-			// XXX
 			return VerdictModified{
-				verdict: C.uint(v.MyVerdict),
+				verdict: C.uint(v.Verdict),
 				data:    (*C.uchar)(unsafe.Pointer(&v.Packet[0])),
 				length:  C.uint(len(v.Packet)),
 			}
 		case v := <-p.verdictChannel:
-			// XXX
 			return VerdictModified{
 				verdict: C.uint(v),
 				data:    nil,
