@@ -27,22 +27,29 @@
 #include <linux/netfilter.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
 
-extern uint go_callback(int id, unsigned char* data, int len, void** cb_func);
+
+typedef struct {
+  uint verdict;
+  uint length;
+  unsigned char *data;
+} verdictModified;
+
+
+extern verdictModified go_callback(int id, unsigned char* data, int len, void** cb_func);
+
 
 static int nf_callback(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct nfq_data *nfa, void *cb_func){
     uint32_t id = -1;
     struct nfqnl_msg_packet_hdr *ph = NULL;
     unsigned char *buffer = NULL;
     int ret = 0;
-    int verdict = 0;
-
     ph = nfq_get_msg_packet_hdr(nfa);
     id = ntohl(ph->packet_id);
+    ret = nfq_get_payload(nfa, (char **)&buffer);
 
-    ret = nfq_get_payload(nfa, &buffer);
-    verdict = go_callback(id, buffer, ret, cb_func);
-
-    return nfq_set_verdict(qh, id, verdict, 0, NULL);
+    verdictModified v;
+    v = go_callback(id, buffer, ret, cb_func);
+    return nfq_set_verdict(qh, id, v.verdict, v.length, v.data);
 }
 
 static inline struct nfq_q_handle* CreateQueue(struct nfq_handle *h, u_int16_t queue, void* cb_func)

@@ -38,9 +38,27 @@ import (
 	"unsafe"
 )
 
+//Verdict for a packet
+type Verdict C.uint
+
+//Verdict + packet for injection
+type VerdictPacket struct {
+	Verdict Verdict
+	Packet  []byte
+}
+
 type NFPacket struct {
-	Packet         gopacket.Packet
-	verdictChannel chan Verdict
+	Packet                 gopacket.Packet
+	verdictChannel         chan Verdict
+	verdictModifiedChannel chan VerdictPacket
+}
+
+//Set the verdict for the packet AND new packet content for injection
+func (p *NFPacket) SetModifiedVerdict(v Verdict, packet []byte) {
+	p.verdictModifiedChannel <- VerdictPacket{
+		Verdict: v,
+		Packet:  packet,
+	}
 }
 
 //Set the verdict for the packet
@@ -57,14 +75,11 @@ func (p *NFPacket) SetRequeueVerdict(newQueueId uint16) {
 }
 
 type NFQueue struct {
-	h       *[0]byte
-	qh      *[0]byte
+	h       *C.struct_nfq_handle
+	qh      *C.struct_nfq_q_handle
 	fd      C.int
 	packets chan NFPacket
 }
-
-//Verdict for a packet
-type Verdict C.uint
 
 const (
 	AF_INET = 2
@@ -141,16 +156,38 @@ func (nfq *NFQueue) run() {
 	C.Run(nfq.h, nfq.fd)
 }
 
+type VerdictModified C.verdictModified
+
 //export go_callback
-func go_callback(queueId C.int, data *C.uchar, len C.int, cb *chan NFPacket) Verdict {
-	xdata := C.GoBytes(unsafe.Pointer(data), len)
-	packet := gopacket.NewPacket(xdata, layers.LayerTypeIPv4, gopacket.DecodeOptions{true, true})
-	p := NFPacket{verdictChannel: make(chan Verdict), Packet: packet}
+func go_callback(queueId C.int, data *C.uchar, length C.int, cb *chan NFPacket) VerdictModified {
+	xdata := C.GoBytes(unsafe.Pointer(data), length)
+	packet := gopacket.NewPacket(xdata, layers.LayerTypeIPv4, gopacket.DecodeOptions{
+		Lazy:               true,
+		NoCopy:             true,
+		SkipDecodeRecovery: false,
+	})
+	p := NFPacket{
+		verdictChannel:         make(chan Verdict),
+		verdictModifiedChannel: make(chan VerdictPacket),
+		Packet:                 packet,
+	}
 	select {
 	case (*cb) <- p:
-		v := <-p.verdictChannel
-		return v
+		select {
+		case v := <-p.verdictModifiedChannel:
+			return VerdictModified{
+				verdict: C.uint(v.Verdict),
+				data:    (*C.uchar)(unsafe.Pointer(&v.Packet[0])),
+				length:  C.uint(len(v.Packet)),
+			}
+		case v := <-p.verdictChannel:
+			return VerdictModified{
+				verdict: C.uint(v),
+				data:    nil,
+				length:  0,
+			}
+		}
 	default:
-		return NF_DROP
+		return VerdictModified{verdict: C.uint(NF_DROP), data: nil, length: 0}
 	}
 }
