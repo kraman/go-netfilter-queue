@@ -53,7 +53,7 @@ type NFPacket struct {
 	verdictModifiedChannel chan VerdictPacket
 }
 
-//Set the verdict for the packet
+//Set the verdict for the packet AND new packet content for injection
 func (p *NFPacket) SetModifiedVerdict(v Verdict, packet []byte) {
 	p.verdictModifiedChannel <- VerdictPacket{
 		Verdict: v,
@@ -162,9 +162,9 @@ type VerdictModified C.verdictModified
 func go_callback(queueId C.int, data *C.uchar, length C.int, cb *chan NFPacket) VerdictModified {
 	xdata := C.GoBytes(unsafe.Pointer(data), length)
 	packet := gopacket.NewPacket(xdata, layers.LayerTypeIPv4, gopacket.DecodeOptions{
-		true,
-		true,
-		false,
+		Lazy:               true,
+		NoCopy:             true,
+		SkipDecodeRecovery: false,
 	})
 	p := NFPacket{
 		verdictChannel:         make(chan Verdict),
