@@ -26,6 +26,7 @@
 #include <linux/socket.h>
 #include <linux/netfilter.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
+#include "netfilter_rdr.h"
 
 extern uint go_callback(int id, unsigned char* data, int len, void** cb_func);
 
@@ -36,18 +37,18 @@ static int nf_callback(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct n
     int ret = 0;
     int verdict = 0;
 
-    ph = nfq_get_msg_packet_hdr(nfa);
+    ph = nfq_get_msg_packet_hdr_rdr(nfa);
     id = ntohl(ph->packet_id);
 
-    ret = nfq_get_payload(nfa, &buffer);
+    ret = nfq_get_payload_rdr(nfa, (char**)&buffer);
     verdict = go_callback(id, buffer, ret, cb_func);
 
-    return nfq_set_verdict(qh, id, verdict, 0, NULL);
+    return nfq_set_verdict_rdr(qh, id, verdict, 0, NULL);
 }
 
 static inline struct nfq_q_handle* CreateQueue(struct nfq_handle *h, u_int16_t queue, void* cb_func)
 {
-    return nfq_create_queue(h, queue, &nf_callback, cb_func);
+    return nfq_create_queue_rdr(h, queue, &nf_callback, cb_func);
 }
 
 static inline void Run(struct nfq_handle *h, int fd)
@@ -56,7 +57,7 @@ static inline void Run(struct nfq_handle *h, int fd)
     int rv;
 
     while ((rv = recv(fd, buf, sizeof(buf), 0)) && rv >= 0) {
-        nfq_handle_packet(h, buf, rv);
+        nfq_handle_packet_rdr(h, buf, rv);
     }
 }
 
