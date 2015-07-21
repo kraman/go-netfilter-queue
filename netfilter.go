@@ -23,9 +23,8 @@ The libnetfilter_queue library is part of the http://netfilter.org/projects/libn
 package netfilter
 
 /*
-#cgo pkg-config: libnetfilter_queue
 #cgo CFLAGS: -Wall -Werror -I/usr/include
-#cgo LDFLAGS: -L/usr/lib64/
+#cgo LDFLAGS: -L/usr/lib64/ -ldl
 
 #include "netfilter.h"
 */
@@ -57,8 +56,8 @@ func (p *NFPacket) SetRequeueVerdict(newQueueId uint16) {
 }
 
 type NFQueue struct {
-	h       *[0]byte
-	qh      *[0]byte
+	h       *C.struct_nfq_handle
+	qh      *C.struct_nfq_q_handle
 	fd      C.int
 	packets chan NFPacket
 }
@@ -85,39 +84,43 @@ func NewNFQueue(queueId uint16, maxPacketsInQueue uint32, packetSize uint32) (*N
 	var err error
 	var ret C.int
 
-	if nfq.h, err = C.nfq_open(); err != nil {
+	if ret = C.InitNF(); ret != 0 {
+		return nil, fmt.Errorf("Unable to initialize Netfilter bindings")
+	}
+
+	if nfq.h, err = C.nfq_open_rdr(); err != nil {
 		return nil, fmt.Errorf("Error opening NFQueue handle: %v\n", err)
 	}
 
-	if ret, err = C.nfq_unbind_pf(nfq.h, AF_INET); err != nil || ret < 0 {
+	if ret, err = C.nfq_unbind_pf_rdr(nfq.h, AF_INET); err != nil || ret < 0 {
 		return nil, fmt.Errorf("Error unbinding existing NFQ handler from AF_INET protocol family: %v\n", err)
 	}
 
-	if ret, err := C.nfq_bind_pf(nfq.h, AF_INET); err != nil || ret < 0 {
+	if ret, err := C.nfq_bind_pf_rdr(nfq.h, AF_INET); err != nil || ret < 0 {
 		return nil, fmt.Errorf("Error binding to AF_INET protocol family: %v\n", err)
 	}
 
 	nfq.packets = make(chan NFPacket)
 	if nfq.qh, err = C.CreateQueue(nfq.h, C.u_int16_t(queueId), unsafe.Pointer(&nfq.packets)); err != nil || nfq.qh == nil {
-		C.nfq_close(nfq.h)
+		C.nfq_close_rdr(nfq.h)
 		return nil, fmt.Errorf("Error binding to queue: %v\n", err)
 	}
 
-	if ret, err = C.nfq_set_queue_maxlen(nfq.qh, C.u_int32_t(maxPacketsInQueue)); err != nil || ret < 0 {
-		C.nfq_destroy_queue(nfq.qh)
-		C.nfq_close(nfq.h)
+	if ret, err = C.nfq_set_queue_maxlen_rdr(nfq.qh, C.u_int32_t(maxPacketsInQueue)); err != nil || ret < 0 {
+		C.nfq_destroy_queue_rdr(nfq.qh)
+		C.nfq_close_rdr(nfq.h)
 		return nil, fmt.Errorf("Unable to set max packets in queue: %v\n", err)
 	}
 
-	if C.nfq_set_mode(nfq.qh, C.u_int8_t(2), C.uint(packetSize)) < 0 {
-		C.nfq_destroy_queue(nfq.qh)
-		C.nfq_close(nfq.h)
+	if C.nfq_set_mode_rdr(nfq.qh, C.u_int8_t(2), C.u_int32_t(packetSize)) < 0 {
+		C.nfq_destroy_queue_rdr(nfq.qh)
+		C.nfq_close_rdr(nfq.h)
 		return nil, fmt.Errorf("Unable to set packets copy mode: %v\n", err)
 	}
 
-	if nfq.fd, err = C.nfq_fd(nfq.h); err != nil {
-		C.nfq_destroy_queue(nfq.qh)
-		C.nfq_close(nfq.h)
+	if nfq.fd, err = C.nfq_fd_rdr(nfq.h); err != nil {
+		C.nfq_destroy_queue_rdr(nfq.qh)
+		C.nfq_close_rdr(nfq.h)
 		return nil, fmt.Errorf("Unable to get queue file-descriptor. %v", err)
 	}
 
@@ -128,8 +131,8 @@ func NewNFQueue(queueId uint16, maxPacketsInQueue uint32, packetSize uint32) (*N
 
 //Unbind and close the queue
 func (nfq *NFQueue) Close() {
-	C.nfq_destroy_queue(nfq.qh)
-	C.nfq_close(nfq.h)
+	C.nfq_destroy_queue_rdr(nfq.qh)
+	C.nfq_close_rdr(nfq.h)
 }
 
 //Get the channel for packets
@@ -144,7 +147,7 @@ func (nfq *NFQueue) run() {
 //export go_callback
 func go_callback(queueId C.int, data *C.uchar, len C.int, cb *chan NFPacket) Verdict {
 	xdata := C.GoBytes(unsafe.Pointer(data), len)
-	packet := gopacket.NewPacket(xdata, layers.LayerTypeIPv4, gopacket.DecodeOptions{true, true})
+	packet := gopacket.NewPacket(xdata, layers.LayerTypeIPv4, gopacket.DecodeOptions{Lazy:true, NoCopy:true})
 	p := NFPacket{verdictChannel: make(chan Verdict), Packet: packet}
 	select {
 	case (*cb) <- p:
